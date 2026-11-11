@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allena l'orecchio: gli intervalli</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 16px;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #f7f9fc; color: #111;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  h1 { font-size: 2rem; margin: 8px 0; text-align: center; }
+  .stato { font-size: 1.3rem; margin-bottom: 14px; }
+  button { font-family: inherit; cursor: pointer; border-radius: 16px; font-weight: bold; }
+  .riga { display: flex; gap: 12px; width: 100%; max-width: 640px; margin-bottom: 16px; flex-wrap: wrap; }
+  #suona, #riascolta {
+    flex: 1; min-height: 90px; font-size: 1.6rem; border: none; color: #fff; background: #1d3a8a;
+  }
+  #riascolta { background: #3b5bdb; }
+  .interruttore { font-size: 1.2rem; display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .interruttore input { width: 32px; height: 32px; }
+  .scelte { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 640px; }
+  .scelta {
+    min-height: 90px; font-size: 1.4rem; background: #fff; color: #111; border: 4px solid #111;
+  }
+  .scelta.giusta { background: #1e8a3c; border-color: #1e8a3c; color: #fff; }
+  .scelta.sbagliata { background: #b00020; border-color: #b00020; color: #fff; }
+  #messaggio { font-size: 1.5rem; min-height: 2.2em; margin: 16px 0 6px; text-align: center; }
+  #avanti, #rifai {
+    min-height: 80px; padding: 0 40px; font-size: 1.6rem; background: #e8590c; color: #fff; border: none;
+  }
+  .risultato { font-size: 2.6rem; text-align: center; margin: 30px 0 20px; }
+  #gioco, #finale { width: 100%; max-width: 640px; display: flex; flex-direction: column; align-items: center; }
+  .nascosto { display: none !important; }
+  @media (max-width: 480px) { .scelte { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <h1>Allena l'orecchio: gli intervalli</h1>
+  <div class="stato" id="stato"></div>
+
+  <div id="gioco">
+    <div class="riga">
+      <button id="suona">▶ Suona</button>
+      <button id="riascolta">🔁 Riascolta</button>
+    </div>
+    <label class="interruttore"><input type="checkbox" id="insieme"> Note insieme</label>
+    <div class="scelte" id="scelte"></div>
+    <div id="messaggio"></div>
+    <button id="avanti" class="nascosto">Avanti ➜</button>
+  </div>
+
+  <div id="finale" class="nascosto">
+    <div class="risultato" id="risultato"></div>
+    <button id="rifai">Rifai</button>
+  </div>
+
+<script>
+  // Gli intervalli del livello, in semitoni. Si cambiano qui.
+  const INTERVALLI = [
+    { nome: "Seconda maggiore", semitoni: 2 },
+    { nome: "Terza maggiore",   semitoni: 4 },
+    { nome: "Quinta giusta",    semitoni: 7 },
+    { nome: "Ottava giusta",    semitoni: 12 }
+  ];
+  const DOMANDE = 10;
+  const DURATA = 0.8;
+
+  let ctx = null, domanda = 0, punti = 0, attuale = null, notaBase = 0, risposto = false;
+
+  function frequenza(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
+
+  // Timbro morbido simile a un piano: tre armoniche e un attacco rapido che si spegne
+  function nota(midi, inizio) {
+    const f = frequenza(midi);
+    const uscita = ctx.createGain();
+    uscita.gain.setValueAtTime(0.0001, inizio);
+    uscita.gain.exponentialRampToValueAtTime(0.35, inizio + 0.01);
+    uscita.gain.exponentialRampToValueAtTime(0.001, inizio + DURATA);
+    uscita.connect(ctx.destination);
+    [[1, 1], [2, 0.4], [3, 0.15]].forEach(([mult, vol]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = f * mult; g.gain.value = vol;
+      o.connect(g).connect(uscita);
+      o.start(inizio); o.stop(inizio + DURATA + 0.05);
+    });
+  }
+
+  function suonaIntervallo() {
+    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === "suspended") ctx.resume();
+    const t = ctx.currentTime + 0.05;
+    const insieme = document.getElementById("insieme").checked;
+    nota(notaBase, t);
+    nota(notaBase + attuale.semitoni, insieme ? t : t + DURATA);
+  }
+
+  function nuovaDomanda() {
+    risposto = false;
+    attuale = INTERVALLI[Math.floor(Math.random() * INTERVALLI.length)];
+    notaBase = 48 + Math.floor(Math.random() * 13); // da Do3 a Do4
+    document.getElementById("stato").textContent = "Domanda " + (domanda + 1) + " di " + DOMANDE + " · Punti: " + punti;
+    document.getElementById("messaggio").textContent = "Premi Suona e ascolta.";
+    document.getElementById("avanti").classList.add("nascosto");
+    const box = document.getElementById("scelte");
+    box.innerHTML = "";
+    INTERVALLI.forEach(iv => {
+      const b = document.createElement("button");
+      b.className = "scelta"; b.textContent = iv.nome;
+      b.onclick = () => rispondi(b, iv);
+      box.appendChild(b);
+    });
+  }
+
+  function rispondi(bottone, iv) {
+    if (risposto) return;
+    risposto = true;
+    if (iv === attuale) {
+      punti++;
+      bottone.classList.add("giusta");
+      document.getElementById("messaggio").textContent = "Giusto!";
+    } else {
+      bottone.classList.add("sbagliata");
+      [...document.querySelectorAll(".scelta")].find(b => b.textContent === attuale.nome).classList.add("giusta");
+      document.getElementById("messaggio").textContent = "Era: " + attuale.nome + ". Riascoltalo.";
+      suonaIntervallo();
+    }
+    document.getElementById("stato").textContent = "Domanda " + (domanda + 1) + " di " + DOMANDE + " · Punti: " + punti;
+    document.getElementById("avanti").classList.remove("nascosto");
+  }
+
+  function inizia() {
+    domanda = 0; punti = 0;
+    document.getElementById("gioco").classList.remove("nascosto");
+    document.getElementById("finale").classList.add("nascosto");
+    nuovaDomanda();
+  }
+
+  document.getElementById("suona").onclick = suonaIntervallo;
+  document.getElementById("riascolta").onclick = suonaIntervallo;
+  document.getElementById("avanti").onclick = () => {
+    domanda++;
+    if (domanda < DOMANDE) nuovaDomanda();
+    else {
+      document.getElementById("gioco").classList.add("nascosto");
+      document.getElementById("finale").classList.remove("nascosto");
+      document.getElementById("stato").textContent = "";
+      document.getElementById("risultato").textContent = "Hai fatto " + punti + " su " + DOMANDE;
+    }
+  };
+  document.getElementById("rifai").onclick = inizia;
+
+  inizia();
+</script>
+</body>
+</html>
